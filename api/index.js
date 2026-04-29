@@ -1,8 +1,8 @@
 export const config = { runtime: "edge" };
 
-const BASE = (process.env.TARGET_DOMAIN ?? "").replace(/\/$/, "");
+const TARGET = (process.env.TARGET_DOMAIN ?? "").replace(/\/$/, "");
 
-const HIDE_HEADERS = new Set([
+const BLOCK_HEADERS = new Set([
   "host",
   "connection",
   "keep-alive",
@@ -18,57 +18,52 @@ const HIDE_HEADERS = new Set([
   "x-forwarded-port",
 ]);
 
-function extractPath(url) {
-  const i = url.indexOf("/", 8);
-  return i === -1 ? "/" : url.slice(i);
-}
-
-function cleanHeaders(input) {
-  const result = new Headers();
-  let realIp = "";
-
-  for (const [name, value] of input) {
-    const key = name.toLowerCase();
-
-    if (HIDE_HEADERS.has(key)) continue;
-    if (key.startsWith("x-vercel-")) continue;
-
-    if (key === "x-real-ip" || key === "x-forwarded-for") {
-      if (!realIp) realIp = value;
-      continue;
-    }
-
-    result.set(name, value);
-  }
-
-  if (realIp) result.set("x-forwarded-for", realIp);
-
-  return result;
-}
-
-export default async function handle(req) {
-  if (!BASE) {
+export default async function handler(request) {
+  if (!TARGET) {
     return new Response("Config missing", { status: 500 });
   }
 
   try {
-    const url = BASE + extractPath(req.url);
-    const method = req.method;
+    const cutIndex = request.url.indexOf("/", 8);
+    const finalUrl =
+      cutIndex === -1 ? TARGET + "/" : TARGET + request.url.slice(cutIndex);
 
-    const res = await fetch(url, {
+    const headers = new Headers();
+    let ip = null;
+
+    for (const [key, value] of request.headers) {
+      const k = key.toLowerCase();
+
+      if (BLOCK_HEADERS.has(k)) continue;
+      if (k.startsWith("x-vercel-")) continue;
+
+      if (k === "x-real-ip" || k === "x-forwarded-for") {
+        if (!ip) ip = value;
+        continue;
+      }
+
+      headers.set(key, value);
+    }
+
+    if (ip) headers.set("x-forwarded-for", ip);
+
+    const method = request.method;
+    const hasBody = method !== "GET" && method !== "HEAD";
+
+    const response = await fetch(finalUrl, {
       method,
-      headers: cleanHeaders(req.headers),
-      body: method === "GET" || method === "HEAD" ? undefined : req.body,
+      headers,
+      body: hasBody ? request.body : undefined,
       redirect: "manual",
     });
 
-    return new Response(res.body, {
-      status: res.status,
-      headers: res.headers,
+    return new Response(response.body, {
+      status: response.status,
+      headers: response.headers,
     });
 
-  } catch (err) {
-    console.error("proxy fail:", err);
-    return new Response("Service unavailable", { status: 502 });
+  } catch (e) {
+    console.error("relay error:", e);
+    return new Response("Request failed", { status: 502 });
   }
 }
