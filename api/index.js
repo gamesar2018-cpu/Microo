@@ -59,11 +59,13 @@ export default async function handle(req) {
       method,
       headers: cleanHeaders(req.headers),
       body: method === "GET" || method === "HEAD" ? undefined : req.body,
-      duplex: "half",
       redirect: "manual",
     });
 
-    return res;
+    return new Response(res.body, {
+      status: res.status,
+      headers: res.headers,
+    });
 
   } catch (err) {
     console.error("proxy fail:", err);
